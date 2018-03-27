@@ -71,13 +71,6 @@ def read_and_decode(filename):
 
 sess = tf.InteractiveSession()
 images_train, labels_train = read_and_decode(data_dir)
-# print(sess.run(labels_train))
-# 产生训练需要的数据，每次执行都会生成一个batch_size的数量的样本（这里进行了样本扩张）
-
-# images_test, labels_test = cifar10_input.inputs(eval_data=True,
-#                                                 data_dir=data_dir,
-#                                                 batch_size=batch_size)
-# 产生训练需要的测试数据，每次执行都会生成一个batch_size的数量的测试样本
 
 
 min_after_dequeue = 10  # 当一次出列操作完成后,队列中元素的最小数量,往往用于定义元素的混合级别.
@@ -177,7 +170,7 @@ final_fully_connected = tf.contrib.layers.fully_connected(
 # setup-only-ignore
 loss = tf.reduce_mean(
     tf.nn.sparse_softmax_cross_entropy_with_logits(
-        logits=final_fully_connected, labels=labels_train))
+        logits=final_fully_connected, labels=label_batch))
 
 global_step = tf.Variable(0)  # 相当于global_step,是一个全局变量,在训练完一个批次后自动增加1
 
