@@ -4,179 +4,159 @@ import time
 import numpy as np
 import tensorflow as tf
 
+import cifar10
+import cifar10_input
+
 max_steps = 21  # 训练轮数（每一轮一个batch参与训练）
-# batch_size = 100  # batch 大小
-data_dir = "./fig/TFrecords/traindata.tfrecords-00"  # 数据目录格式
+batch_size = 128  # batch 大小
+data_dir = '/tmp/cifar10_data/cifar-10-batches-bin'  # 数据目录
 
 
-def read_and_decode(filename):
-    #根据文件名生成一个队列
-    filename_queue = tf.train.string_input_producer([filename])
+# 权重初始化函数
+# shape：卷积核参数，格式类似于[5,5,3,32]，代表卷积核尺寸（前两个数字），通道数和卷积核个数
+# stddev：标准差
+# wl：L2正则化的权值参数
+# 返回带有L2正则的初始化的权重参数
+def variable_with_weight_loss(shape, stddev, wl):
+    var = tf.Variable(tf.truncated_normal(shape, stddev=stddev))
+    # 截断产生正态分布，就是说产生正态分布的值如果与均值的差值大于两倍的标准差，
+    # 那就重新生成。和一般的正太分布的产生随机数据比起来，这个函数产生的随机数
+    # 与均值的差距不会超过两倍的标准差
+    if wl is not None:
+        weight_loss = tf.multiply(tf.nn.l2_loss(var), wl, name='weight_loss')
+        # 给权重W加上L2正则，并用wl参数控制L2 loss的大小
+        tf.add_to_collection('losses', weight_loss)
+        # 将weight loss存在一个名为‘losses’的collection里，后面会用到
+    return var
 
-    reader = tf.TFRecordReader()
-    _, serialized_example = reader.read(filename_queue)   #返回文件名和文件
-    features = tf.parse_single_example(serialized_example,
-                                   features={
-                                       'label': tf.FixedLenFeature([], tf.int64),
-                                       'img_raw' : tf.FixedLenFeature([], tf.string),
-                                       'img_width': tf.FixedLenFeature([], tf.int64),
-                                       'img_height': tf.FixedLenFeature([], tf.int64),
-                                   })  #取出包含image和label的feature对象
-    image = tf.decode_raw(features['img_raw'], tf.uint8)
-    height = tf.cast(features['img_height'],tf.int32)
-    width = tf.cast(features['img_width'],tf.int32)
-    label = tf.cast(features['label'], tf.int32)
+# loss计算函数
+# logits：未经softmax处理过的CNN的原始输出
+# labels：样本标签
+# 输出：总体loss值
+def loss(logits, labels):
+    labels = tf.cast(labels, tf.int64)  # 类型转换为tf.int64
+    cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(
+        logits=logits, labels=labels, name='cross_entropy_per_example')
+    # 计算结合softmax的交叉熵（即对logits进行softmax处理，由于softmax与cross_entropy经常一起用，
+    # 所以TensorFlow把他们整合到一起了），算是一个标准范式
+    cross_entropy_mean = tf.reduce_mean(cross_entropy, name='cross_entropy')
+    # 计算一个batch中交叉熵的均值
+    tf.add_to_collection('losses', cross_entropy_mean)
+    # 将交叉熵存在名为‘losses’的collection里
 
-    image = tf.reshape(image, [60, 160, 1])
-
-    return image, label
-
-sess = tf.InteractiveSession()
-images_train, labels_train = read_and_decode(data_dir)
-
-
-min_after_dequeue = 10  # 当一次出列操作完成后,队列中元素的最小数量,往往用于定义元素的混合级别.
-batch_size = 10  # 批处理大小
-capacity = min_after_dequeue + 3*batch_size  # 批处理容量
-image_batch, label_batch = tf.train.batch([images_train, labels_train], batch_size=batch_size, capacity=capacity)
-# 通过随机打乱的方式创建数据批次
-
-
-# Converting the images to a float of [0,1) to match the expected input to convolution2d
-# 将图像转换为灰度值位于[0, 1)的浮点类型,以与convlution2d期望的输入匹配
-float_image_batch = tf.image.convert_image_dtype(image_batch, tf.float32)
-
-#  第一个卷积层
-
-conv2d_layer_one = tf.contrib.layers.conv2d(
-    float_image_batch,
-    num_outputs=32,  # 生成的滤波器的数量
-    kernel_size=(5, 5),  # 滤波器的高度和宽度
-    activation_fn=tf.nn.relu,
-    weights_initializer=tf.random_normal_initializer,  # 设置weight的值是正态分布的随机值
-    stride=(2, 2),  # 对image_batch和imput_channels的跨度值
-    trainable=True)
-
-print("conv2d_layer_one shape: ",sess.run(tf.shape(conv2d_layer_one)))
-#[ 3 30 80 32]
-# shape(3, 125, 76,32)
-# 3表示批处理数据量是3,
-# 125和76表示经过卷积操作后的宽和高,这和滤波器的大小还有步长有关系
-
-#  第一个混合/池化层,输出降采样
-
-pool_layer_one = tf.nn.max_pool(conv2d_layer_one,
-                                ksize=[1, 2, 2, 1],
-                                strides=[1, 2, 2, 1],
-                                padding='SAME')
-print("pool_layer_one shape: ",sess.run(tf.shape(pool_layer_one)))
-#[ 3 15 40 32]
-# shape(3, 63,38,32)
-# 混合层ksize,1表示选取一个批处理数据,2表示在宽的维度取2个单位,2表示在高的取两个单位,1表示选取一个滤波器也就数选择一个通道进行操作.
-# strides步长表示其分别在四个维度上的跨度
+    return tf.add_n(tf.get_collection('losses'), name='total_loss')
+    # 返回total loss，total loss包括交叉熵和上面提到的weight loss
 
 
-# 注意卷积输出的第一个维度和最后一个维度没有发生变化,但是中间的两个维度发生了变化
+cifar10.maybe_download_and_extract()  # 下载数据集，并解压到默认位置
 
+images_train, labels_train = cifar10_input.distorted_inputs(data_dir=data_dir,
+                                                            batch_size=batch_size)
+# 产生训练需要的数据，每次执行都会生成一个batch_size的数量的样本（这里进行了样本扩张）
 
-# 第二个卷积层
+images_test, labels_test = cifar10_input.inputs(eval_data=True,
+                                                data_dir=data_dir,
+                                                batch_size=batch_size)
+# 产生训练需要的测试数据，每次执行都会生成一个batch_size的数量的测试样本
 
-conv2d_layer_two = tf.contrib.layers.conv2d(
-    pool_layer_one,
-    num_outputs=64,  # 更多输出通道意味着滤波器数量的增加
-    kernel_size=(5, 5),
-    activation_fn=tf.nn.relu,
-    weights_initializer=tf.random_normal_initializer,
-    stride=(1, 1),
-    trainable=True)
+image_holder = tf.placeholder(tf.float32, [batch_size, 24, 24, 3])
+label_holder = tf.placeholder(tf.int32, [batch_size])
+# 创建输入数据的placeholder（相当于占位符）
 
-print("conv2d_layer_two shape: ",sess.run(tf.shape(conv2d_layer_two)))
-# [ 3 30 80 32]
-# shape(3, 63,38,64)
-# 第二个混合/池化层,输出降采样
+weight1 = variable_with_weight_loss(shape=[5, 5, 3, 64], stddev=5e-2, wl=0.0)
+# 第一层权重初始化，产生64个3通道（RGB图片），尺寸为5*5的卷积核，不带L2正则（wl=0.0）
+kernel1 = tf.nn.conv2d(image_holder, weight1, [1, 1, 1, 1], padding='SAME')
+# 对输入原始图像进行卷积操作，步长为[1, 1, 1, 1]，即将每一个像素点都计算到，
+# 补零模式为'SAME'（不够卷积核大小的块就补充0）
+bias1 = tf.Variable(tf.constant(0.0, shape=[64]))
+# 定义第一层的偏置参数，由于有64个卷积核，这里有偏置尺寸为shape=[64]
+conv1 = tf.nn.relu(tf.nn.bias_add(kernel1, bias1))
+# 卷积结果加偏置后采用relu激活
+pool1 = tf.nn.max_pool(conv1, ksize=[1, 3, 3, 1], strides=[1, 2, 2, 1],
+                       padding='SAME')
+# 第一层的池化操作，使用尺寸为3*3，步长为2*2的池化层进行操作
+# 这里的ksize和strides第一个和第四个数字一般都为1
+norm1 = tf.nn.lrn(pool1, 4, bias=1.0, alpha=0.001 / 9.0, beta=0.75)
+# 用LRN对结果进行处理，使得比较大的值变得更大，比较小的值变得更小，模仿神经系统的侧抑制机制
 
-pool_layer_two = tf.nn.max_pool(conv2d_layer_two,
-                                ksize=[1, 2, 2, 1],
-                                strides=[1, 2, 2, 1],
-                                padding='SAME')
-print("pool_layer_two shape: ",sess.run(tf.shape(pool_layer_two)))
-#[ 3  8 20 64]
-# shape(3, 32, 19,64)
+# 这一部分和上面基本相同，不加赘述
+weight2 = variable_with_weight_loss(shape=[5, 5, 64, 64], stddev=5e-2, wl=0.0)
+kernel2 = tf.nn.conv2d(norm1, weight2, [1, 1, 1, 1], padding='SAME')
+bias2 = tf.Variable(tf.constant(0.1, shape=[64]))
+conv2 = tf.nn.relu(tf.nn.bias_add(kernel2, bias2))
+norm2 = tf.nn.lrn(conv2, 4, bias=1.0, alpha=0.001 / 9.0, beta=0.75)
+pool2 = tf.nn.max_pool(norm2, ksize=[1, 3, 3, 1], strides=[1, 2, 2, 1],
+                       padding='SAME')
 
-# 光栅化层
+# 这里定义一个全连接层
+reshape = tf.reshape(pool2, [batch_size, -1])
+# 将上一层的输出结果拉平（flatten），[batch_size, -1]中的-1代表不确定多大
+dim = reshape.get_shape()[1].value
+# 得到数据扁平化后的长度
 
-# 由于后面要使用softmax,因此全连接层需要修改为二阶张量,张量的第1维用于区分每幅图像,第二维用于对们每个输入张量的秩1张量
-flattened_layer_two = tf.reshape(
-    pool_layer_two,
-    [
-        batch_size,  # image_batch中的每幅图像
-        -1  # 输入的其他所有维度
-    ])
-print("flattened_layer_two shape: ",sess.run(tf.shape(flattened_layer_two)))
-#[    3 10240]
-# 例如,如果此时一批次有三个数据的时候,则每一行就是一个数据行,然后每一列就是这个图片的数据,
-# 这里的-1参数将最后一个池化层调整为一个巨大的秩1张量
+# 建立一个隐含节点数为384的全连接层
+weight3 = variable_with_weight_loss(shape=[dim, 384], stddev=0.04, wl=0.004)
+bias3 = tf.Variable(tf.constant(0.1, shape=[384]))
+local3 = tf.nn.relu(tf.matmul(reshape, weight3) + bias3)
 
+# 建立一个隐含节点数为192的全连接层
+weight4 = variable_with_weight_loss(shape=[384, 192], stddev=0.04, wl=0.004)
+bias4 = tf.Variable(tf.constant(0.1, shape=[192]))
+local4 = tf.nn.relu(tf.matmul(local3, weight4) + bias4)
 
-# 全连接层1
-hidden_layer_three = tf.contrib.layers.fully_connected(
-    flattened_layer_two,
-    512,
-    weights_initializer=tf.truncated_normal_initializer(stddev=0.1),
-    activation_fn=tf.nn.relu
-)
-print("hidden_layer_three shape: ",sess.run(tf.shape(hidden_layer_three)))
-#[  3 512]
-# 对一些神经元进行dropout操作.每个神经元以0.1的概率决定是否放电
-hidden_layer_three = tf.nn.dropout(hidden_layer_three, 0.1)
+# 建立输出层（由于cifar数据库一共有10个类别的标签，所以这里输出节点数为10）
+weight5 = variable_with_weight_loss(shape=[192, 10], stddev=1/192.0, wl=0.0)
+bias5 = tf.Variable(tf.constant(0.0, shape=[10]))
+logits = tf.add(tf.matmul(local4, weight5), bias5)
+# 注意这里，这里直接是网络的原始输出（wx+b这种形式），没有加softmax激活
 
+loss = loss(logits, label_holder)
+# 计算总体loss，包括weight loss 和 cross_entropy
 
-# The output of this are all the connections between the previous layers and the 120 different dog breeds
-# available to train on.
-# 输出是前面的层与训练中可用的120个不同品种的狗的品种的全连接
-# 全连接层2
-final_fully_connected = tf.contrib.layers.fully_connected(
-    hidden_layer_three,
-    4,  # ImageNet Dogs 数据集中狗的品种数
-    weights_initializer=tf.truncated_normal_initializer(stddev=0.1)
-)
-print("final_fully_connected shape: ",sess.run(tf.shape(final_fully_connected)))
-#[  3 120]
+train_op = tf.train.AdamOptimizer(1e-3).minimize(loss)
+# 选择AdamOptimizer作为优化器
 
-# setup-only-ignore
-loss = tf.reduce_mean(
-    tf.nn.sparse_softmax_cross_entropy_with_logits(
-        logits=final_fully_connected, labels=label_batch))
+top_k_op = tf.nn.in_top_k(logits, label_holder, 1)
+# 关于tf.nn.in_top_k函数的用法见http://blog.csdn.net/uestc_c2_403/article/details/73187915
+# tf.nn.in_top_k会返回一个[batch_size, classes(类别数)]大小的布尔型张量，记录是否判断正确
 
-global_step = tf.Variable(0)  # 相当于global_step,是一个全局变量,在训练完一个批次后自动增加1
+sess = tf.InteractiveSession()  # 注册为默认session
+tf.global_variables_initializer().run()  # 初始化全部模型参数
 
-#  学习率使用退化学习率的方法
-# 设置初始学习率为0.01,
-learning_rate = tf.train.exponential_decay(learning_rate=0.01, global_step=global_step, decay_steps=120,
-                                           decay_rate=0.95, staircase=True)
+tf.train.start_queue_runners()  # 启动线程（QueueRunner是一个不存在于代码中的东西，而是后台运作的一个概念）
 
-optimizer = tf.train.AdamOptimizer(learning_rate, 0.9).minimize(loss, global_step=global_step)
+for step in range(max_steps):
+    start_time = time.time()
+    image_batch, label_batch = sess.run([images_train, labels_train])
+    # 获得一个batch的训练数据
+    _, loss_value = sess.run([train_op, loss], feed_dict={image_holder: image_batch,
+                                                          label_holder: label_batch})
+    # 运行训练过程并获得一个batch的total_loss
 
-# 主程序
-init_op = tf.group(tf.global_variables_initializer(), tf.local_variables_initializer())
-sess.run(init_op)
+    duration = time.time() - start_time  # 记录跑一个batch所耗费的时间
 
-coord = tf.train.Coordinator()
-# 线程控制管理器
-threads = tf.train.start_queue_runners(sess=sess, coord=coord)
+    if step % 10 == 0:  # 每10个batch输出信息
+        examples_per_sec = batch_size / duration  # 计算每秒能跑多少个样本
+        sec_per_batch = float(duration)  # 计算每个batch需要耗费的时间
 
-# 训练
-training_steps = 1000
-for step in range(training_steps):
-    sess.run(optimizer)
+        format_str = (
+            'step %d, loss = %.2f (%.1f examples/sec; %.3f sec/batch)')
+        print(format_str % (step, loss_value, examples_per_sec, sec_per_batch))
 
-    if step % 100 == 0:
-        print("loss:", sess.run(loss))
+# 在测试集上验证精度
+num_examples = 10000
 
-train_prediction = tf.nn.softmax(final_fully_connected)
-print("labels is: \n", sess.run(labels_train))
-print("\nresult is :\n", sess.run(train_prediction))
+num_iter = int(math.ceil(num_examples / batch_size))  # math.ceil 对浮点数向上取整
+true_count = 0
+total_sample_count = num_iter * batch_size
+step = 0
+while step < num_iter:
+    image_batch, label_batch = sess.run([images_test, labels_test])
+    # 获得一个batch的测试数据
+    predictions = sess.run([top_k_op], feed_dict={image_holder: image_batch,
+                                                  label_holder: label_batch})
+    true_count += np.sum(predictions)  # 获得预测正确的样本数
+    step += 1
 
-coord.request_stop()
-coord.join(threads)
-sess.close()
+precision = true_count / total_sample_count  # 获得预测精度
+print("precision = %.4f%%" % (precision * 100))
