@@ -4,12 +4,7 @@ import time
 import numpy as np
 import tensorflow as tf
 
-import cifar10
-import cifar10_input
-
-max_steps = 21  # 训练轮数（每一轮一个batch参与训练）
-batch_size = 128  # batch 大小
-data_dir = '/tmp/cifar10_data/cifar-10-batches-bin'  # 数据目录
+max_steps = 800  # 训练轮数（每一轮一个batch参与训练）
 
 
 # 权重初始化函数
@@ -48,22 +43,42 @@ def loss(logits, labels):
     # 返回total loss，total loss包括交叉熵和上面提到的weight loss
 
 
-cifar10.maybe_download_and_extract()  # 下载数据集，并解压到默认位置
+data_dir = "./fig/TFrecords/traindata.tfrecords-00"  # 数据目录格式
 
-images_train, labels_train = cifar10_input.distorted_inputs(data_dir=data_dir,
-                                                            batch_size=batch_size)
-# 产生训练需要的数据，每次执行都会生成一个batch_size的数量的样本（这里进行了样本扩张）
 
-images_test, labels_test = cifar10_input.inputs(eval_data=True,
-                                                data_dir=data_dir,
-                                                batch_size=batch_size)
-# 产生训练需要的测试数据，每次执行都会生成一个batch_size的数量的测试样本
+def read_and_decode(filename):
+    #根据文件名生成一个队列
+    filename_queue = tf.train.string_input_producer([filename])
+    reader = tf.TFRecordReader()
+    _, serialized_example = reader.read(filename_queue)   #返回文件名和文件
+    features = tf.parse_single_example(serialized_example,
+                                   features={
+                                       'label': tf.FixedLenFeature([], tf.int64),
+                                       'img_raw' : tf.FixedLenFeature([], tf.string),
+                                       'img_width': tf.FixedLenFeature([], tf.int64),
+                                       'img_height': tf.FixedLenFeature([], tf.int64),
+                                   })  #取出包含image和label的feature对象
+    image = tf.decode_raw(features['img_raw'], tf.uint8)
+    height = tf.cast(features['img_height'],tf.int32)
+    width = tf.cast(features['img_width'],tf.int32)
+    label = tf.cast(features['label'], tf.int32)
+    image = tf.reshape(image, [60, 160, 1])
+    return image, label
 
-image_holder = tf.placeholder(tf.float32, [batch_size, 24, 24, 3])
+images, labels = read_and_decode(data_dir)
+
+
+min_after_dequeue = 10  # 当一次出列操作完成后,队列中元素的最小数量,往往用于定义元素的混合级别.
+batch_size = 10  # 批处理大小
+capacity = min_after_dequeue + 3*batch_size  # 批处理容量
+images_train, labels_train = tf.train.batch([images, labels], batch_size=batch_size, capacity=capacity)
+# 通过随机打乱的方式创建数据批次
+
+image_holder = tf.placeholder(tf.float32, [batch_size, 60, 160, 1])
 label_holder = tf.placeholder(tf.int32, [batch_size])
 # 创建输入数据的placeholder（相当于占位符）
 
-weight1 = variable_with_weight_loss(shape=[5, 5, 3, 64], stddev=5e-2, wl=0.0)
+weight1 = variable_with_weight_loss(shape=[5, 5, 1, 64], stddev=5e-2, wl=0.0)
 # 第一层权重初始化，产生64个3通道（RGB图片），尺寸为5*5的卷积核，不带L2正则（wl=0.0）
 kernel1 = tf.nn.conv2d(image_holder, weight1, [1, 1, 1, 1], padding='SAME')
 # 对输入原始图像进行卷积操作，步长为[1, 1, 1, 1]，即将每一个像素点都计算到，
@@ -73,11 +88,12 @@ bias1 = tf.Variable(tf.constant(0.0, shape=[64]))
 conv1 = tf.nn.relu(tf.nn.bias_add(kernel1, bias1))
 # 卷积结果加偏置后采用relu激活
 pool1 = tf.nn.max_pool(conv1, ksize=[1, 3, 3, 1], strides=[1, 2, 2, 1],
-                       padding='SAME')
+                                                        padding='SAME')
 # 第一层的池化操作，使用尺寸为3*3，步长为2*2的池化层进行操作
 # 这里的ksize和strides第一个和第四个数字一般都为1
 norm1 = tf.nn.lrn(pool1, 4, bias=1.0, alpha=0.001 / 9.0, beta=0.75)
 # 用LRN对结果进行处理，使得比较大的值变得更大，比较小的值变得更小，模仿神经系统的侧抑制机制
+
 
 # 这一部分和上面基本相同，不加赘述
 weight2 = variable_with_weight_loss(shape=[5, 5, 64, 64], stddev=5e-2, wl=0.0)
@@ -86,7 +102,7 @@ bias2 = tf.Variable(tf.constant(0.1, shape=[64]))
 conv2 = tf.nn.relu(tf.nn.bias_add(kernel2, bias2))
 norm2 = tf.nn.lrn(conv2, 4, bias=1.0, alpha=0.001 / 9.0, beta=0.75)
 pool2 = tf.nn.max_pool(norm2, ksize=[1, 3, 3, 1], strides=[1, 2, 2, 1],
-                       padding='SAME')
+                                                        padding='SAME')
 
 # 这里定义一个全连接层
 reshape = tf.reshape(pool2, [batch_size, -1])
@@ -105,8 +121,8 @@ bias4 = tf.Variable(tf.constant(0.1, shape=[192]))
 local4 = tf.nn.relu(tf.matmul(local3, weight4) + bias4)
 
 # 建立输出层（由于cifar数据库一共有10个类别的标签，所以这里输出节点数为10）
-weight5 = variable_with_weight_loss(shape=[192, 10], stddev=1/192.0, wl=0.0)
-bias5 = tf.Variable(tf.constant(0.0, shape=[10]))
+weight5 = variable_with_weight_loss(shape=[192, 3], stddev=1/192.0, wl=0.0)
+bias5 = tf.Variable(tf.constant(0.0, shape=[3]))
 logits = tf.add(tf.matmul(local4, weight5), bias5)
 # 注意这里，这里直接是网络的原始输出（wx+b这种形式），没有加softmax激活
 
@@ -143,19 +159,24 @@ for step in range(max_steps):
             'step %d, loss = %.2f (%.1f examples/sec; %.3f sec/batch)')
         print(format_str % (step, loss_value, examples_per_sec, sec_per_batch))
 
-# 在测试集上验证精度
-num_examples = 10000
+#保存模型
+# saver = tf.train.Saver()
+# saver.save(sess,"./Model/MyModel", global_step=max_steps)
 
+# 在测试集上验证精度
+num_examples = 1000
 num_iter = int(math.ceil(num_examples / batch_size))  # math.ceil 对浮点数向上取整
 true_count = 0
 total_sample_count = num_iter * batch_size
 step = 0
 while step < num_iter:
-    image_batch, label_batch = sess.run([images_test, labels_test])
+    image_batch, label_batch = sess.run([images_train, labels_train])
+    print("label_batch:",label_batch)
     # 获得一个batch的测试数据
     predictions = sess.run([top_k_op], feed_dict={image_holder: image_batch,
                                                   label_holder: label_batch})
     true_count += np.sum(predictions)  # 获得预测正确的样本数
+    print("predetion :",predictions)
     step += 1
 
 precision = true_count / total_sample_count  # 获得预测精度
