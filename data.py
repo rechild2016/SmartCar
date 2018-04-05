@@ -7,10 +7,10 @@ import time
 import threading
 import showImage
 
-roadType = ["zhidao", "shizi"]
+roadType = ["zhidao", "shizi", "wandao","test"]
 
-file_dir = ".\image_shizi3.txt"
-output = "./fig/Images/%s/"%(roadType[1])
+file_dir = ".\saidao2.txt"
+output = "./fig/Images/%s/"%(roadType[3])
 
 def readBuffer(input, number, pos):
     imgList = []
@@ -55,7 +55,7 @@ while(True):
     else:
         print("img get!")
     new_img.putdata(imgbuff)
-    new_img.save(output+"%.3d.jpg" %(i+204))
+    new_img.save(output+"%.3d.jpg" %(i))
     new_img = new_img.resize(size,Image.ANTIALIAS)
     images.append(new_img)
     

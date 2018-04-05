@@ -4,8 +4,8 @@ import time
 import numpy as np
 import tensorflow as tf
 
-max_steps = 800  # 训练轮数（每一轮一个batch参与训练）
-
+max_steps = 10  # 训练轮数（每一轮一个batch参与训练）
+sess = tf.InteractiveSession()  # 注册为默认session
 
 # 权重初始化函数
 # shape：卷积核参数，格式类似于[5,5,3,32]，代表卷积核尺寸（前两个数字），通道数和卷积核个数
@@ -29,6 +29,7 @@ def variable_with_weight_loss(shape, stddev, wl):
 # labels：样本标签
 # 输出：总体loss值
 def loss(logits, labels):
+    print("in loss")
     labels = tf.cast(labels, tf.int64)  # 类型转换为tf.int64
     cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(
         logits=logits, labels=labels, name='cross_entropy_per_example')
@@ -136,7 +137,7 @@ top_k_op = tf.nn.in_top_k(logits, label_holder, 1)
 # 关于tf.nn.in_top_k函数的用法见http://blog.csdn.net/uestc_c2_403/article/details/73187915
 # tf.nn.in_top_k会返回一个[batch_size, classes(类别数)]大小的布尔型张量，记录是否判断正确
 
-sess = tf.InteractiveSession()  # 注册为默认session
+sess = tf.InteractiveSession()
 tf.global_variables_initializer().run()  # 初始化全部模型参数
 
 tf.train.start_queue_runners()  # 启动线程（QueueRunner是一个不存在于代码中的东西，而是后台运作的一个概念）
@@ -154,6 +155,7 @@ for step in range(max_steps):
     if step % 10 == 0:  # 每10个batch输出信息
         examples_per_sec = batch_size / duration  # 计算每秒能跑多少个样本
         sec_per_batch = float(duration)  # 计算每个batch需要耗费的时间
+        print(sess.run(logits))
 
         format_str = (
             'step %d, loss = %.2f (%.1f examples/sec; %.3f sec/batch)')
@@ -164,20 +166,26 @@ for step in range(max_steps):
 # saver.save(sess,"./Model/MyModel", global_step=max_steps)
 
 # 在测试集上验证精度
-num_examples = 1000
+num_examples = 353
 num_iter = int(math.ceil(num_examples / batch_size))  # math.ceil 对浮点数向上取整
 true_count = 0
 total_sample_count = num_iter * batch_size
 step = 0
+NumTrue = 0;
 while step < num_iter:
     image_batch, label_batch = sess.run([images_train, labels_train])
-    print("label_batch:",label_batch)
+
     # 获得一个batch的测试数据
     predictions = sess.run([top_k_op], feed_dict={image_holder: image_batch,
                                                   label_holder: label_batch})
     true_count += np.sum(predictions)  # 获得预测正确的样本数
-    print("predetion :",predictions)
+    # print("predetion :",predictions)
+    # print("predictions:", len(predictions))
+    for i in range(batch_size):
+        if label_batch[i] ==2 and predictions[0][i] == True:
+            NumTrue += 1
     step += 1
 
 precision = true_count / total_sample_count  # 获得预测精度
 print("precision = %.4f%%" % (precision * 100))
+print(NumTrue)
