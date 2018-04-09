@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 #写入图片路径
 swd = './fig/Show/'
 #TFRecord文件路径
-data_path = './fig/TFrecords/traindata.tfrecords-02'
+data_path = './fig/TFrecords/traindata.tfrecords-00'
 # 获取文件名列表
 data_files = tf.gfile.Glob(data_path)
 print(data_files)
@@ -37,7 +37,7 @@ with tf.Session() as sess: #开始一个会话
     #启动多线程
     coord=tf.train.Coordinator()
     threads= tf.train.start_queue_runners(coord=coord)
-    for i in range(100):
+    for i in range(800):
         #image_down = np.asarray(image_down.eval(), dtype='uint8')
         # plt.imshow(image.eval())
         # plt.show()

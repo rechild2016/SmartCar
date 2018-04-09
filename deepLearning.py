@@ -1,10 +1,9 @@
 import math
 import time
-
 import numpy as np
 import tensorflow as tf
 
-max_steps = 10  # 训练轮数（每一轮一个batch参与训练）
+max_steps = 600  # 训练轮数（每一轮一个batch参与训练）
 sess = tf.InteractiveSession()  # 注册为默认session
 
 # 权重初始化函数
@@ -29,12 +28,14 @@ def variable_with_weight_loss(shape, stddev, wl):
 # labels：样本标签
 # 输出：总体loss值
 def loss(logits, labels):
-    print("in loss")
     labels = tf.cast(labels, tf.int64)  # 类型转换为tf.int64
     cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(
         logits=logits, labels=labels, name='cross_entropy_per_example')
     # 计算结合softmax的交叉熵（即对logits进行softmax处理，由于softmax与cross_entropy经常一起用，
     # 所以TensorFlow把他们整合到一起了），算是一个标准范式
+    # cross_entropy = tf.nn.softmax_cross_entropy_with_logits(
+    #     logits=logits, labels=labels, name='cross_entropy_per_example')
+
     cross_entropy_mean = tf.reduce_mean(cross_entropy, name='cross_entropy')
     # 计算一个batch中交叉熵的均值
     tf.add_to_collection('losses', cross_entropy_mean)
@@ -79,16 +80,16 @@ image_holder = tf.placeholder(tf.float32, [batch_size, 60, 160, 1])
 label_holder = tf.placeholder(tf.int32, [batch_size])
 # 创建输入数据的placeholder（相当于占位符）
 
-weight1 = variable_with_weight_loss(shape=[5, 5, 1, 64], stddev=5e-2, wl=0.0)
+weight1 = variable_with_weight_loss(shape=[5, 5, 1, 32], stddev=5e-2, wl=0.0)
 # 第一层权重初始化，产生64个3通道（RGB图片），尺寸为5*5的卷积核，不带L2正则（wl=0.0）
 kernel1 = tf.nn.conv2d(image_holder, weight1, [1, 1, 1, 1], padding='SAME')
 # 对输入原始图像进行卷积操作，步长为[1, 1, 1, 1]，即将每一个像素点都计算到，
 # 补零模式为'SAME'（不够卷积核大小的块就补充0）
-bias1 = tf.Variable(tf.constant(0.0, shape=[64]))
+bias1 = tf.Variable(tf.constant(0.0, shape=[32]))
 # 定义第一层的偏置参数，由于有64个卷积核，这里有偏置尺寸为shape=[64]
 conv1 = tf.nn.relu(tf.nn.bias_add(kernel1, bias1))
 # 卷积结果加偏置后采用relu激活
-pool1 = tf.nn.max_pool(conv1, ksize=[1, 3, 3, 1], strides=[1, 2, 2, 1],
+pool1 = tf.nn.max_pool(conv1, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1],
                                                         padding='SAME')
 # 第一层的池化操作，使用尺寸为3*3，步长为2*2的池化层进行操作
 # 这里的ksize和strides第一个和第四个数字一般都为1
@@ -97,18 +98,19 @@ norm1 = tf.nn.lrn(pool1, 4, bias=1.0, alpha=0.001 / 9.0, beta=0.75)
 
 
 # 这一部分和上面基本相同，不加赘述
-weight2 = variable_with_weight_loss(shape=[5, 5, 64, 64], stddev=5e-2, wl=0.0)
+weight2 = variable_with_weight_loss(shape=[5, 5, 32, 64], stddev=5e-2, wl=0.0)
 kernel2 = tf.nn.conv2d(norm1, weight2, [1, 1, 1, 1], padding='SAME')
 bias2 = tf.Variable(tf.constant(0.1, shape=[64]))
 conv2 = tf.nn.relu(tf.nn.bias_add(kernel2, bias2))
 norm2 = tf.nn.lrn(conv2, 4, bias=1.0, alpha=0.001 / 9.0, beta=0.75)
-pool2 = tf.nn.max_pool(norm2, ksize=[1, 3, 3, 1], strides=[1, 2, 2, 1],
+pool2 = tf.nn.max_pool(norm2, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1],
                                                         padding='SAME')
 
 # 这里定义一个全连接层
 reshape = tf.reshape(pool2, [batch_size, -1])
 # 将上一层的输出结果拉平（flatten），[batch_size, -1]中的-1代表不确定多大
 dim = reshape.get_shape()[1].value
+print("dim = ", dim)    #38400
 # 得到数据扁平化后的长度
 
 # 建立一个隐含节点数为384的全连接层
@@ -116,15 +118,15 @@ weight3 = variable_with_weight_loss(shape=[dim, 384], stddev=0.04, wl=0.004)
 bias3 = tf.Variable(tf.constant(0.1, shape=[384]))
 local3 = tf.nn.relu(tf.matmul(reshape, weight3) + bias3)
 
-# 建立一个隐含节点数为192的全连接层
-weight4 = variable_with_weight_loss(shape=[384, 192], stddev=0.04, wl=0.004)
-bias4 = tf.Variable(tf.constant(0.1, shape=[192]))
-local4 = tf.nn.relu(tf.matmul(local3, weight4) + bias4)
+# # 建立一个隐含节点数为192的全连接层
+# weight4 = variable_with_weight_loss(shape=[384, 192], stddev=0.04, wl=0.004)
+# bias4 = tf.Variable(tf.constant(0.1, shape=[192]))
+# local4 = tf.nn.relu(tf.matmul(local3, weight4) + bias4)
 
 # 建立输出层（由于cifar数据库一共有10个类别的标签，所以这里输出节点数为10）
-weight5 = variable_with_weight_loss(shape=[192, 3], stddev=1/192.0, wl=0.0)
+weight5 = variable_with_weight_loss(shape=[384, 3], stddev=1/384.0, wl=0.0)
 bias5 = tf.Variable(tf.constant(0.0, shape=[3]))
-logits = tf.add(tf.matmul(local4, weight5), bias5)
+logits = tf.add(tf.matmul(local3, weight5), bias5)
 # 注意这里，这里直接是网络的原始输出（wx+b这种形式），没有加softmax激活
 
 loss = loss(logits, label_holder)
@@ -155,7 +157,7 @@ for step in range(max_steps):
     if step % 10 == 0:  # 每10个batch输出信息
         examples_per_sec = batch_size / duration  # 计算每秒能跑多少个样本
         sec_per_batch = float(duration)  # 计算每个batch需要耗费的时间
-        print(sess.run(logits))
+        # print(sess.run(logits))
 
         format_str = (
             'step %d, loss = %.2f (%.1f examples/sec; %.3f sec/batch)')
@@ -164,28 +166,39 @@ for step in range(max_steps):
 #保存模型
 # saver = tf.train.Saver()
 # saver.save(sess,"./Model/MyModel", global_step=max_steps)
-
+print("===========before Test========")
 # 在测试集上验证精度
-num_examples = 353
+num_examples = 600
 num_iter = int(math.ceil(num_examples / batch_size))  # math.ceil 对浮点数向上取整
 true_count = 0
 total_sample_count = num_iter * batch_size
 step = 0
-NumTrue = 0;
+NumTrue1 = 0
+NumTrue2 = 0
+NumTrue3 = 0
+print("num_iter=",num_iter)
+print("total_sample_count",total_sample_count)
 while step < num_iter:
+    print(step)
     image_batch, label_batch = sess.run([images_train, labels_train])
 
     # 获得一个batch的测试数据
-    predictions = sess.run([top_k_op], feed_dict={image_holder: image_batch,
+    predictions, logits_value = sess.run([top_k_op, logits], feed_dict={image_holder: image_batch,
                                                   label_holder: label_batch})
     true_count += np.sum(predictions)  # 获得预测正确的样本数
-    # print("predetion :",predictions)
+    print("label_batch: ",label_batch)
+    print("logits_value: ",logits_value)
+    print("predetion :",predictions)
     # print("predictions:", len(predictions))
     for i in range(batch_size):
-        if label_batch[i] ==2 and predictions[0][i] == True:
-            NumTrue += 1
+        if label_batch[i] ==0 and predictions[i] == True:
+            NumTrue1 += 1
+        elif label_batch[i] ==1 and predictions[i] == True:
+            NumTrue2 += 1
+        elif label_batch[i] ==2 and predictions[i] == True:
+            NumTrue3 += 1
     step += 1
-
+print(true_count,total_sample_count)
 precision = true_count / total_sample_count  # 获得预测精度
 print("precision = %.4f%%" % (precision * 100))
-print(NumTrue)
+print(NumTrue1,NumTrue2,NumTrue3)
