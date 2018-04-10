@@ -3,7 +3,8 @@ import time
 import numpy as np
 import tensorflow as tf
 
-max_steps = 600  # 训练轮数（每一轮一个batch参与训练）
+max_steps = 500  # 训练轮数（每一轮一个batch参与训练）
+isTrain = 0
 sess = tf.InteractiveSession()  # 注册为默认session
 
 # 权重初始化函数
@@ -47,7 +48,6 @@ def loss(logits, labels):
 
 data_dir = "./fig/TFrecords/traindata.tfrecords-00"  # 数据目录格式
 
-
 def read_and_decode(filename):
     #根据文件名生成一个队列
     filename_queue = tf.train.string_input_producer([filename])
@@ -73,7 +73,8 @@ images, labels = read_and_decode(data_dir)
 min_after_dequeue = 10  # 当一次出列操作完成后,队列中元素的最小数量,往往用于定义元素的混合级别.
 batch_size = 10  # 批处理大小
 capacity = min_after_dequeue + 3*batch_size  # 批处理容量
-images_train, labels_train = tf.train.batch([images, labels], batch_size=batch_size, capacity=capacity)
+images_train, labels_train = tf.train.shuffle_batch([images, labels], batch_size=batch_size,
+                                                    capacity=capacity,min_after_dequeue = 10)
 # 通过随机打乱的方式创建数据批次
 
 image_holder = tf.placeholder(tf.float32, [batch_size, 60, 160, 1])
@@ -118,11 +119,6 @@ weight3 = variable_with_weight_loss(shape=[dim, 384], stddev=0.04, wl=0.004)
 bias3 = tf.Variable(tf.constant(0.1, shape=[384]))
 local3 = tf.nn.relu(tf.matmul(reshape, weight3) + bias3)
 
-# # 建立一个隐含节点数为192的全连接层
-# weight4 = variable_with_weight_loss(shape=[384, 192], stddev=0.04, wl=0.004)
-# bias4 = tf.Variable(tf.constant(0.1, shape=[192]))
-# local4 = tf.nn.relu(tf.matmul(local3, weight4) + bias4)
-
 # 建立输出层（由于cifar数据库一共有10个类别的标签，所以这里输出节点数为10）
 weight5 = variable_with_weight_loss(shape=[384, 3], stddev=1/384.0, wl=0.0)
 bias5 = tf.Variable(tf.constant(0.0, shape=[3]))
@@ -132,50 +128,57 @@ logits = tf.add(tf.matmul(local3, weight5), bias5)
 loss = loss(logits, label_holder)
 # 计算总体loss，包括weight loss 和 cross_entropy
 
-train_op = tf.train.AdamOptimizer(1e-3).minimize(loss)
+train_op = tf.train.AdamOptimizer(1e-2).minimize(loss)
 # 选择AdamOptimizer作为优化器
 
 top_k_op = tf.nn.in_top_k(logits, label_holder, 1)
 # 关于tf.nn.in_top_k函数的用法见http://blog.csdn.net/uestc_c2_403/article/details/73187915
 # tf.nn.in_top_k会返回一个[batch_size, classes(类别数)]大小的布尔型张量，记录是否判断正确
-
-sess = tf.InteractiveSession()
+keep_prob = tf.placeholder(tf.float32)
+# sess = tf.InteractiveSession()
 tf.global_variables_initializer().run()  # 初始化全部模型参数
 
 tf.train.start_queue_runners()  # 启动线程（QueueRunner是一个不存在于代码中的东西，而是后台运作的一个概念）
+saver = tf.train.Saver()
+if isTrain:
+    for step in range(max_steps):
+        start_time = time.time()
+        image_batch, label_batch = sess.run([images_train, labels_train])
+        # 获得一个batch的训练数据
+        _, loss_value = sess.run([train_op, loss], feed_dict={image_holder: image_batch,
+                                                              label_holder: label_batch,keep_prob: 0.5})
+        # 运行训练过程并获得一个batch的total_loss
 
-for step in range(max_steps):
-    start_time = time.time()
-    image_batch, label_batch = sess.run([images_train, labels_train])
-    # 获得一个batch的训练数据
-    _, loss_value = sess.run([train_op, loss], feed_dict={image_holder: image_batch,
-                                                          label_holder: label_batch})
-    # 运行训练过程并获得一个batch的total_loss
+        duration = time.time() - start_time  # 记录跑一个batch所耗费的时间
 
-    duration = time.time() - start_time  # 记录跑一个batch所耗费的时间
+        if step % 10 == 0:  # 每10个batch输出信息
+            examples_per_sec = batch_size / duration  # 计算每秒能跑多少个样本
+            sec_per_batch = float(duration)  # 计算每个batch需要耗费的时间
 
-    if step % 10 == 0:  # 每10个batch输出信息
-        examples_per_sec = batch_size / duration  # 计算每秒能跑多少个样本
-        sec_per_batch = float(duration)  # 计算每个batch需要耗费的时间
-        # print(sess.run(logits))
+            format_str = (
+                'step %d, loss = %.2f (%.1f examples/sec; %.3f sec/batch)')
+            print(format_str % (step, loss_value, examples_per_sec, sec_per_batch))
 
-        format_str = (
-            'step %d, loss = %.2f (%.1f examples/sec; %.3f sec/batch)')
-        print(format_str % (step, loss_value, examples_per_sec, sec_per_batch))
+    #保存模型
+    saver.save(sess,"./Model/MyModel", global_step=max_steps)
+else:
+    ckpt = tf.train.get_checkpoint_state("./Model/")
+    if ckpt and ckpt.model_checkpoint_path:
+        saver.restore(sess, ckpt.model_checkpoint_path)
+        print("load finish!",ckpt.model_checkpoint_path)
+    else:
+        print("load failed!")
+        pass
 
-#保存模型
-# saver = tf.train.Saver()
-# saver.save(sess,"./Model/MyModel", global_step=max_steps)
 print("===========before Test========")
 # 在测试集上验证精度
-num_examples = 600
+num_examples = 420
 num_iter = int(math.ceil(num_examples / batch_size))  # math.ceil 对浮点数向上取整
 true_count = 0
 total_sample_count = num_iter * batch_size
 step = 0
-NumTrue1 = 0
-NumTrue2 = 0
-NumTrue3 = 0
+classes={"wandao":0, "shizi":0, "zhidao":0}
+
 print("num_iter=",num_iter)
 print("total_sample_count",total_sample_count)
 while step < num_iter:
@@ -186,19 +189,21 @@ while step < num_iter:
     predictions, logits_value = sess.run([top_k_op, logits], feed_dict={image_holder: image_batch,
                                                   label_holder: label_batch})
     true_count += np.sum(predictions)  # 获得预测正确的样本数
-    print("label_batch: ",label_batch)
-    print("logits_value: ",logits_value)
-    print("predetion :",predictions)
-    # print("predictions:", len(predictions))
+
+    print("logits_value: ", logits_value)
+    print("label_batch: ", label_batch)
+    print("predetion :", predictions, "\n")
+
     for i in range(batch_size):
         if label_batch[i] ==0 and predictions[i] == True:
-            NumTrue1 += 1
+            classes["wandao"] += 1
         elif label_batch[i] ==1 and predictions[i] == True:
-            NumTrue2 += 1
+            classes["shizi"] += 1
         elif label_batch[i] ==2 and predictions[i] == True:
-            NumTrue3 += 1
+            classes["zhidao"] += 1
     step += 1
-print(true_count,total_sample_count)
+
+print("识别正确数/图像总数: ", true_count, "/", total_sample_count)
 precision = true_count / total_sample_count  # 获得预测精度
 print("precision = %.4f%%" % (precision * 100))
-print(NumTrue1,NumTrue2,NumTrue3)
+print(classes)

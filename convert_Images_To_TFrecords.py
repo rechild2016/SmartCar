@@ -14,7 +14,7 @@ num = 0
 #第几个TFRecord文件
 recordfilenum = 0
 #类别
-classes=["shizi", "wandao", "zhidao"]
+classes=["wandao", "shizi", "zhidao"]
 # classes=["wandao"]
 #tfrecords格式文件名
 tfrecordfilename = ("traindata.tfrecords-%.2d" % recordfilenum)
