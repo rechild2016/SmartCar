@@ -12,10 +12,10 @@ bestnum = 1000
 #第几个图片
 num = 0
 #第几个TFRecord文件
-recordfilenum = 0
+recordfilenum = 2
 #类别
-classes=["wandao", "shizi", "zhidao"]
-# classes=["wandao"]
+# classes=["wandao", "shizi", "zhidao"]
+classes=["test"]
 #tfrecords格式文件名
 tfrecordfilename = ("traindata.tfrecords-%.2d" % recordfilenum)
 writer= tf.python_io.TFRecordWriter(filepath+tfrecordfilename)
