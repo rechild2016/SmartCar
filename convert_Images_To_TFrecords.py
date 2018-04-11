@@ -1,7 +1,7 @@
-﻿# -*- coding: utf-8 -*-
-import os 
+﻿import os
 import tensorflow as tf 
 from PIL import Image  
+import cv2
 
 #图片路径
 cwd = "./fig/Images/"
@@ -33,7 +33,8 @@ for index,name in enumerate(classes):
             tfrecordfilename = ("traindata.tfrecords-%.2d" % recordfilenum)
             writer= tf.python_io.TFRecordWriter(filepath+tfrecordfilename)
         img_path = class_path+img_name #每一个图片的地址
-        img=Image.open(img_path,'r')
+        img=Image.open(img_path,'r').convert('L')
+
         size = img.size
         img_raw=img.tobytes()#将图片转化为二进制格式
         example = tf.train.Example(

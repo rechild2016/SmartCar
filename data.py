@@ -9,8 +9,8 @@ import showImage
 
 roadType = ["zhidao", "shizi", "wandao","test"]
 
-file_dir = ".\saidao2.txt"
-output = "./fig/Images/%s/"%(roadType[3])
+file_dir = ".\image_zhidao2.txt"
+output = "./fig/Images/%s/"%(roadType[0])
 
 def readBuffer(input, number, pos):
     imgList = []
@@ -55,7 +55,7 @@ while(True):
     else:
         print("img get!")
     new_img.putdata(imgbuff)
-    new_img.save(output+"%.3d.jpg" %(i))
+    new_img.save(output+"%.3d.jpg" %(i + 58))
     new_img = new_img.resize(size,Image.ANTIALIAS)
     images.append(new_img)
     

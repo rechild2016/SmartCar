@@ -2,6 +2,7 @@ import math
 import numpy as np
 import tensorflow as tf
 import cv2
+import Image
 
 data_dir = "./fig/TFrecords/traindata.tfrecords-02"  # 数据目录格式
 
@@ -88,68 +89,29 @@ else:
 
 print("===========before Test========")
 # 在测试集上验证精度
-num_examples = 300
-num_iter = int(math.ceil(num_examples / batch_size))  # math.ceil 对浮点数向上取整
-
-step = 0
 classes={"wandao":0, "shizi":0, "zhidao":0}
 dict = ["wandao", "shizi", "zhidao"]
 
-image = tf.reshape(images_train, [60, 160])
-fontface = cv2.FONT_HERSHEY_SIMPLEX
-fontscale = 0.8
-fontcolor = (0, 250, 0)
+num_examples = 183
+num_iter = int(math.ceil(num_examples / batch_size))  # math.ceil 对浮点数向上取整
+step = 0
 
 while step < num_iter:
 
-
-    image_batch, label_batch = sess.run([images_train, labels_train])
-    logits_value = sess.run(logits, feed_dict={image_holder: image_batch,
-                                                 label_holder: label_batch})
+    image_batch = sess.run(images_train)
+    logits_value = sess.run(logits, feed_dict={image_holder: image_batch})
     print("logits_value: ", logits_value[0])
-
-    image1 = sess.run(image)
 
     index = logits_value[0].argmax()
     ans = (dict[index])
     print(dict[index])
 
-    _, im_gray = cv2.threshold(image1,127, 255, cv2.THRESH_BINARY_INV)  #这里进行了反转颜色
+    image1 = sess.run(tf.reshape(image_batch, [60, 160]))
+    img = Image.ImageProcess(image1,ans)
 
-    # img2 = cv2.Canny(im_gray[10:55,5:155], 100, 200)
-    img2 = cv2.Canny(im_gray, 100, 200)
-
-    img3 = np.ones((60,160))*255
-    img4 = np.ones((60, 160)) * 255
-
-    _, contours, hierarchy = cv2.findContours(img2, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE,offset=(0,0))
-
-    c_max = []
-    for i in range(len(contours)):
-        cnt = contours[i]
-        area = cv2.contourArea(cnt)
-        print(len(contours[i]),area)
-        # 处理掉小的轮廓区域，这个区域的大小自己定义。
-        if(len(contours[i]) > 30 or area > 8):
-            c_max.append(cnt)
-    print("有效轮廓: ",len(c_max))
-    cv2.drawContours(img3, c_max, -1, (0, 255, 0), 2)
-    cv2.drawContours(img4, contours, -1, (0, 255, 0), 1)
-    pentagram = c_max[0]
-    pentagram1 = c_max[1]
-    leftmost = tuple(pentagram[:, 0][pentagram[:, :, 0].argmin()])
-    rightmost = tuple(pentagram1[:, 0][pentagram1[:, :, 0].argmin()])
-    print(leftmost,rightmost)
-    cv2.circle(img4, leftmost, 2, (0, 255, 0), 3)
-    cv2.circle(img4, rightmost, 2, (0, 255, 0), 3)
-    im1 = cv2.resize(im_gray, (200, 200))
-    im2 = cv2.resize(img3, (200, 200))
-    im3 = cv2.resize(img4, (200,200))
-
-    cv2.putText(im3, ans, (60, 60), fontface, fontscale, fontcolor)
-    cv2.imshow("img", np.hstack((im1, im3, im2)))
-
+    cv2.imshow("img",img)
     cv2.waitKey(0)
+
     step += 1
     print("step: %d / %d\n" % (step, num_iter))
 
